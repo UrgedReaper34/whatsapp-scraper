@@ -119,7 +119,7 @@ RL.on('line', async (text) => {
                 //+ allParams[1] is a parameter for the specific chat name that you want to scrape.
             await page.$eval(`[dir="auto"][title="${allParams[1]}"]`, (elm, uniqueID) => {
                 //+ Every whatsapp chat has a div containing all the elements relating to each message.
-                //+ This marks the parent div with our unique ID.
+                //+ This marks the parent div with our unique ID, so we can locate it easily in the future.
                 var x = elm.closest(`[aria-label="Chat list"] > div > [role="row"]`)
                 x.setAttribute("id", `${uniqueID}`)
                
@@ -132,7 +132,8 @@ RL.on('line', async (text) => {
             } catch(e){
                 console.log(e)
             }
-            
+            //+ This commented code is functionality I removed that was supposed to throw an error if the script detected multiple chats with the same name.
+            //+ I removed it because I did not intend on using this script to scrape more than one chat.
             /*(roomList, allParams, page) => {
                 
                 if(roomList.length == 0){
@@ -158,6 +159,7 @@ RL.on('line', async (text) => {
             break;
             case "scrape":
             startTime = Date.now()
+            //+ This commented code was an experiment using createWriteStream to store data in 4 different files. For the sake of simplicity, I did not opt to use this route, but for large amounts of data it would be best to use this method.
             /*var names = ["./data2/STest.json", "./data2/JTest.json", "./data2/STrain.json", "./data2/JTrain.json"]
             var trainStream1 = fs.createWriteStream(names[0])
             var trainStream2 = fs.createWriteStream(names[1])
@@ -167,17 +169,28 @@ RL.on('line', async (text) => {
             console.log("Scraping...")
             
             function scrapeMessages(){
+                //+ Some context before we dive into the code.
+                //+ How Whatsapp Web works (at least as of the time this script was written) was that:
+                //+ 1. The message elements fell under a parent element.
+                //+ 2. Since Whatsapp cant display your entire chat history at once, these messages are loaded in bits and pieces. Each group of messages that are loaded would fall in the above mentioned parent element.
+                //+ 3. Every time you scroll up, another group of messages are loaded.
+                //+ 4. A lock screen icon reminding you of Whatsapp's end to end encryption is always the first message regardless of chat.
+                //+ Thus there are 3 groups of elements. The message element itself, the message group element (the parent of the message elements) and the parent of the message group element, where the message groups are procedurally loaded.
+                //+ So what this program does is it scrapes through all the messages in a message group, then moves on the the next message group. 
+                //+ Once all message groups are scraped, it scrolls to the top, forcing WhatsApp to load more message groups.
+                //+ This cycle repeats until a lock icon is found. (see 4.) This indicates we are at the end of the chat.
                 return new Promise(async (resolve, reject) => {
                     page.waitForSelector(`[aria-label="Message list. Press right arrow key on a message to open message context menu."]`)
                     .then(async (val) => {
                         if(val == null){
                             return true;
                         }
-                    
+                    //+ This searches for the message group element with a specific characteristic, in this case the aria-label attribute.
                     var msgParent = await page.$(`[aria-label="Message list. Press right arrow key on a message to open message context menu."]`)
                     try{
+                        //+ evaluate() runs code on an element in the DOM.
                         msgParent.evaluate((msgList) => {
-                            
+                            //+ This code denotes who sent what.
                             //1 = user, 2 = other person
                             var data = {
                                 X: [], 
@@ -185,22 +198,25 @@ RL.on('line', async (text) => {
                                 
                             }
                             
-                            
+                            //+ For every child of the paent element (ie messages) it will execute the following code
                             msgList.childNodes.forEach((element) => {
                                 if(!element.classList.contains("scanned")){
-                                
+                                //+ This check is here in case for some reason the message was not scanned earlier.
                                 element.classList.add("scanned")
+                                //+ This selects the span element that contains the message content.
                                 var text = element.querySelector("span.i0jNr.selectable-text span")
                                 
                                 
                                 if(text != null){
-                                    
+                                //+ If the search does not come up empty-handed (ie not an image or document message)    
                                     console.log(text.innerText)
                                     if(element.classList.contains("message-out")){
                                         //user's message
+                                        //+ Add the message content to the database along with the appropriate label
                                         data[`Y`].push("1")
                                         data[`X`].push(text.innerText)
                                     } else if(element.classList.contains("message-in")){
+
                                         data[`Y`].push("2")
                                         data[`X`].push(text.innerText)
                                     } else {
@@ -217,12 +233,13 @@ RL.on('line', async (text) => {
                             return data;
 
                         }) //evaluate
+
                         .then(data => {
-                            
+                            //+ Adds the data to the databases
                             mainDb.X = mainDb.X.concat(data.X)
                             mainDb.Y =  mainDb.Y.concat(data.Y)
                             msgParent.evaluate(async (c) => {
-                                
+                                //+ c in this case refers to the msgParent element in the DOM.
                                 var g = c.querySelector(`[data-testid="lock-small"][data-icon="lock-small"]`)
                                 for(x in c.childNodes){
                                     if(x > 20){
@@ -230,7 +247,7 @@ RL.on('line', async (text) => {
                                     }
                                 }
                                 c.childNodes[0].scrollIntoView(true)
-                                
+                                //+ If the lock icon is not detected, the function will return with true.
                                 if(g == null){
                                     //scrapeMessages()
                                     return true;
@@ -271,9 +288,12 @@ RL.on('line', async (text) => {
                     return new Promise((resolve, reject) => {
                     if(status != 0){
                     scrapeMessages().then((ans) => {
+                        //+ ans returns true if the lock icon has not been found/end of chat has not been detected
                         if(ans){
+                            //+ Recursive function
                             main().then((xc) => {
                                 resolve(xc)
+                                //+ xc refers to the final database, so the function will resolve the database all the way up the long chain of recursion
                             })
                             return false;
                         } else {
@@ -289,6 +309,7 @@ RL.on('line', async (text) => {
                         })
                     })
                 } else {
+                    //+ This resolves false when the status code has changed
                     console.log("Stopping")
                     resolve("false")
                     return false;
@@ -299,13 +320,15 @@ RL.on('line', async (text) => {
                 status = 1;
                 main().then((msg) => {
                     if(msg = "false"){
+                        //+ THis happens only if the main() function has been interrupted by a change of status code.
                         return false;
                     }
                     console.log("Cleaning data...")
                     console.log(`Seconds elapsed since start: ${(Date.now() - startTime) / 1000}`)
                     var mainDB = mainDb
+                    //+ did this because I wrote the wrong variable name
                     console.log(mainDB)
-                    //data cleaning?
+                    //data cleaning
                     
                     var equalised;
                     cleanDB = {
@@ -314,7 +337,9 @@ RL.on('line', async (text) => {
                         testX: [],
                         testY: []
                     }
+
                     if(config.equalSides){
+                        //+ config.equalSides is a configuration option that places an equal amount of data from both types of labels into each dataset
                         equalised = equalise(mainDB.Y, mainDB.X)
                         cleanDB = {
                             trainX: equalised.X,
@@ -354,6 +379,7 @@ RL.on('line', async (text) => {
             console.log("Command List:\nsetup (deprecated): Launchs chrome with a wssocket connection\nlaunch: Launches puppeteer with a constant user-profile.\nnc/navigateChat,(chatName): Navigates to a chat")
             break;
         case "save":
+            //+ Another command that does the data cleaning without the scraping.
             console.log("Saving...")
             if(allParams[1] == undefined){
                 allParams[1] = "default"
@@ -440,15 +466,18 @@ function ID(){
     return `x${Math.ceil(Math.random() * 8999999 + 1000000)}`;
 }
 function equalise(labelsX,dataX){
+    //+ This is the function that ensures an equal amount of data marked with the two different labels
     var labels = labelsX;
     var data = dataX;
     //data cleaning.
+    //+ "1" and "2" are the labels for the client and the other party sending messages respectively.
     var splitDB = {
         "1": [],
         "2": []
     };
 
     for(x in labels){
+        //+ sorts data by label e.g label 1 data goes into group 1
         splitDB[labels[x]].push(data[x])
     }
     
@@ -469,11 +498,13 @@ function equalise(labelsX,dataX){
     var rem;
     for(x in splitDB[a]){
         if(x / interval == 0){
+            //+ removes every nth datapoint, where n is interval
             var rem = splitDB[a].splice(x, 1)
             data.splice(data.indexOf(rem), 1)
             labels.splice(data.indexOf(rem), 1)
         }
     }
+    //+ Since interval was rounded, there will still be inaccuracies. This trims off the datapoints at the end of the array.
     while(splitDB[a].length < splitDB[b].length){
         rem = splitDB[b].splice(splitDB[b].length - 1, 1)
         data.splice(data.indexOf(rem), 1)
@@ -499,7 +530,7 @@ function equalise(labelsX,dataX){
             return {"Y": labels, "X": data};
         }
 }
-/* stupid codedump
+/* 
 RL.question(`More than one chatroom found. Choose one:${function(){
                             var str;
                             for(x in roomList){
